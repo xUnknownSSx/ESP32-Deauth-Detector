@@ -10,6 +10,10 @@
 #define OLED_RESET    -1
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// --- XIAO ESP32-C6 DEDICATED PIN DEFINITIONS ---
+#define XIAO_SDA 6  // Pin D4
+#define XIAO_SCL 7  // Pin D5
+
 // Hardware Timing Configurations
 uint8_t current_channel = 1;
 unsigned long lastChannelHopTime = 0;
@@ -20,11 +24,9 @@ unsigned long attackCounter = 0;
 bool attackDetected = false;
 unsigned long lastAttackTime = 0;
 
-// Dynamic Metrics for Live Text Feed Layer
 int currentRSSI = -100;
 uint8_t attackChannel = 1;
 
-// Graph Array Structures
 #define GRAPH_WIDTH 50
 #define GRAPH_LEFT_OFFSET 74
 int rssiHistory[GRAPH_WIDTH];
@@ -37,7 +39,6 @@ void sniffer_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
   wifi_promiscuous_pkt_t* packet = (wifi_promiscuous_pkt_t*)buf;
   uint8_t* payload = packet->payload;
   
-  // Dereference payload safely to inspect header bits cleanly
   uint8_t frame_type = (payload[0] & 0x0C) >> 2;
   uint8_t frame_subtype = (payload[0] & 0xF0) >> 4;
 
@@ -59,12 +60,10 @@ void renderLayout() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
-  // --- LEFT HALF: INTERFACE EMOTICON CHASSIS ---
   if (attackDetected) {
     display.setTextSize(1);
     display.setCursor(0, 4);
     display.print("ATTACK!");
-    
     display.setTextSize(2);
     display.setCursor(5, 24);
     display.print("X_X");
@@ -72,40 +71,31 @@ void renderLayout() {
     display.setTextSize(1);
     display.setCursor(0, 4);
     display.print("Scanning");
-    
     display.setTextSize(2);
     display.setCursor(5, 24);
     display.print("^_^");
   }
 
-  // --- RIGHT HALF: ROLLING GRAPH MATRIX ---
-  display.drawFastVLine(GRAPH_LEFT_OFFSET - 4, 0, 42, SSD1306_WHITE); // Column boundary divider
+  display.drawFastVLine(GRAPH_LEFT_OFFSET - 4, 0, 42, SSD1306_WHITE);
   
   for (int i = 0; i < GRAPH_WIDTH; i++) {
     int dataPointIndex = (graphIndex + i) % GRAPH_WIDTH;
     int pointRssi = rssiHistory[dataPointIndex];
-    
     int constrainedRssi = constrain(pointRssi, -100, -30);
     int barHeight = map(constrainedRssi, -100, -30, 0, 36);
-    
     display.drawFastVLine(GRAPH_LEFT_OFFSET + i, 39 - barHeight, barHeight, SSD1306_WHITE);
   }
 
-  // --- LOWER REGION: REAL-TIME TELEMETRY DATA PANEL ---
-  display.drawFastHLine(0, 44, 128, SSD1306_WHITE); // Horizontal break line
+  display.drawFastHLine(0, 44, 128, SSD1306_WHITE);
   display.setTextSize(1);
   display.setCursor(0, 52);
   
   if (attackDetected) {
-    display.print("Dth:");
-    display.print(attackCounter);
-    display.print(" Ch:");
-    display.print(attackChannel);
-    display.print(" RSSI:");
-    display.print(currentRSSI);
+    display.print("Dth:"); display.print(attackCounter);
+    display.print(" Ch:"); display.print(attackChannel);
+    display.print(" RSSI:"); display.print(currentRSSI);
   } else {
-    display.print("Logs caught: ");
-    display.print(attackCounter);
+    display.print("Logs caught: "); display.print(attackCounter);
   }
 
   display.display();
@@ -114,6 +104,9 @@ void renderLayout() {
 void setup() {
   Serial.begin(115200);
   delay(1000); 
+
+  // Direct, clean I2C pin assignment for the XIAO architecture
+  Wire.begin(XIAO_SDA, XIAO_SCL); 
 
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) { 
     for(;;); 
@@ -134,20 +127,14 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
 
-  // Shift graph columns dynamically every 500ms
   if (currentTime - lastGraphUpdateTime >= 500) {
     lastGraphUpdateTime = currentTime;
-    if (attackDetected) {
-      pushToGraph(currentRSSI);
-    } else {
-      pushToGraph(-100);
-    }
+    if (attackDetected) pushToGraph(currentRSSI);
+    else pushToGraph(-100);
   }
 
   if (attackDetected) {
     renderLayout();
-    
-    // Hold alert layout for 3.5 seconds before releasing channel latch
     if (currentTime - lastAttackTime > 3500) {
       attackDetected = false;
       currentRSSI = -100;
@@ -158,12 +145,8 @@ void loop() {
   else {
     if (currentTime - lastChannelHopTime >= HOP_INTERVAL) {
       lastChannelHopTime = currentTime;
-      
       current_channel++;
-      if (current_channel > 13) {
-        current_channel = 1;
-      }
-      
+      if (current_channel > 13) current_channel = 1;
       esp_wifi_set_channel(current_channel, WIFI_SECOND_CHAN_NONE);
       renderLayout();
     }
